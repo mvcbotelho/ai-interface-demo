@@ -20,6 +20,14 @@ app.use(express.json());
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434/api/generate";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3";
 const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 8000);
+const OLLAMA_TAGS_URL = (() => {
+  try {
+    const parsed = new URL(OLLAMA_URL);
+    return `${parsed.origin}/api/tags`;
+  } catch (_error) {
+    return "http://localhost:11434/api/tags";
+  }
+})();
 
 const systemPrompt = `
 You interpret user intent.
@@ -227,6 +235,25 @@ async function callOllama(prompt, timeoutMs = OLLAMA_TIMEOUT_MS) {
   }
 }
 
+async function checkOllamaReachability(timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(OLLAMA_TAGS_URL, {
+      method: "GET",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Ollama health check failed: ${response.status} ${errorText}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 app.post("/intent", async (req, res) => {
   const { query, context } = req.body ?? {};
 
@@ -269,7 +296,7 @@ app.get("/health", async (_req, res) => {
   const start = Date.now();
 
   try {
-    await callOllama("Respond with JSON: {\"status\":\"ok\"}", 3000);
+    await checkOllamaReachability(Math.min(OLLAMA_TIMEOUT_MS, 5000));
     return res.json({
       status: "ok",
       backend: "up",
